@@ -1,0 +1,156 @@
+---
+title: "ROMS-vvhA-rainevent"
+author: "Jessica Bullington"
+date: "12/27/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load data}
+data1 = read.csv("AlaWai_forcing_16Feb2019_16.00.csv")
+data2 = read.csv("AlaWai_forcing_17Feb2019_04.00.csv")
+data3 = read.csv("AlaWai_forcing_17Feb2019_20.00.csv")
+data4 = read.csv("AlaWai_forcing_18Feb2019_00.00.csv")
+
+bot.data = read.csv("AlaWai_DiscreteBottle.csv")
+bot.data$log.rain = log10(bot.data$Rainfall_5Day+0.1)
+bot.data$cube.sal = (bot.data$Salinity)^3
+
+```
+
+
+```{r load libraries}
+library(ggplot2)
+library(tidyr)
+library(gridExtra)
+```
+
+
+```{r define values}
+# air temp (daily max)
+data1$AirTemp_Max = 25
+data2$AirTemp_Max = 26.1
+data3$AirTemp_Max = 26.1
+data4$AirTemp_Max = 26.7
+
+# rainfall (previous 5 day average)
+data1$rain = 18.8464
+data2$rain = 20.4724
+data3$rain = 20.4724
+data4$rain = 20.7772
+
+data1$log.rain = log10(data1$rain+0.1)
+data2$log.rain = log10(data2$rain+0.1)
+data3$log.rain = log10(data3$rain+0.1)
+data4$log.rain = log10(data4$rain+0.1)
+
+# salinity
+data1$cube.sal = (data1$salinity)^3
+data2$cube.sal = (data2$salinity)^3
+data3$cube.sal = (data3$salinity)^3
+data4$cube.sal = (data4$salinity)^3
+
+# water temp
+data1 = data1 %>% rename(WaterTemp = temperature)
+data2 = data2 %>% rename(WaterTemp = temperature)
+data3 = data3 %>% rename(WaterTemp = temperature)
+data4 = data4 %>% rename(WaterTemp = temperature)
+
+```
+
+
+```{r predict vvhA}
+model3 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp, data = bot.data) 
+
+cols = c("log.rain", "AirTemp_Max", "cube.sal", "WaterTemp")
+nd1 = data1[, (colnames(data1) %in% cols)]
+
+pred1.vvhA.CI1 = predict(model3, newdata = nd1, interval = "confidence")
+pred1.vvhA.PI1 = predict(model3, newdata = nd1, interval = "prediction")
+
+pred.data1 = data.frame(data1, pred1.vvhA.CI1)
+pred.data1 = pred.data1 %>% rename(vvhA = fit)
+
+pred2.vvhA.CI1 = predict(model3, newdata = data2, interval = "confidence")
+pred2.vvhA.PI1 = predict(model3, newdata = data2, interval = "prediction")
+
+pred.data2 = data.frame(data2, pred2.vvhA.CI1)
+pred.data2 = pred.data2 %>% rename(vvhA = fit)
+
+pred3.vvhA.CI1 = predict(model3, newdata = data3, interval = "confidence")
+pred3.vvhA.PI1 = predict(model3, newdata = data3, interval = "prediction")
+
+pred.data3 = data.frame(data3, pred3.vvhA.CI1)
+pred.data3 = pred.data3 %>% rename(vvhA = fit)
+
+pred4.vvhA.CI1 = predict(model3, newdata = data4, interval = "confidence")
+pred4.vvhA.PI1 = predict(model3, newdata = data4, interval = "prediction")
+
+pred.data4 = data.frame(data4, pred4.vvhA.CI1)
+pred.data4 = pred.data4 %>% rename(vvhA = fit)
+
+```
+
+
+```{r plot vvhA}
+pdf("ROMS_Plume.pdf", height = 4, width = 5)
+
+ggplot() + # initialize plot 
+  geom_point(data=pred.data1, shape=15,
+             mapping=aes(x=longitude, y=latitude, col=vvhA), # variables to plot
+             size=1) + # size of points
+  scale_color_stepsn(n.breaks = 10, colors = hcl.colors(10, palette = "RdYlBu", rev=T), limits=c(0,1.6)) +
+  ggtitle("2019-02-16 16:00 HST")+
+  xlim(-157.867,-157.808) + # x-axis limits
+  ylim(21.258,21.3) + # y-axis limits
+  coord_quickmap()+ # quick map projection
+  theme_classic() # change the default ggplot2 theme
+
+ggplot() + # initialize plot 
+  geom_point(data=pred.data2, shape=15,
+             mapping=aes(x=longitude, y=latitude, col=vvhA), # variables to plot
+             size=1) + # size of points
+  scale_color_stepsn(n.breaks = 10, colors = hcl.colors(10, palette = "RdYlBu", rev=T), limits=c(0,1.6)) +
+  ggtitle("2019-02-17 04:00 HST")+
+  xlim(-157.867,-157.808) + # x-axis limits
+  ylim(21.258,21.3) + # y-axis limits
+  coord_quickmap()+ # quick map projection
+  theme_classic() # change the default ggplot2 theme
+
+ggplot() + # initialize plot 
+  geom_point(data=pred.data3, shape=15,
+             mapping=aes(x=longitude, y=latitude, col=vvhA), # variables to plot
+             size=1) + # size of points
+  scale_color_stepsn(n.breaks = 10, colors = hcl.colors(10, palette = "RdYlBu", rev=T), limits=c(0,1.6)) +
+  ggtitle("2019-02-17 20:00 HST")+
+  xlim(-157.867,-157.808) + # x-axis limits
+  ylim(21.258,21.3) + # y-axis limits
+  coord_quickmap()+ # quick map projection
+  theme_classic() # change the default ggplot2 theme
+
+ggplot() + # initialize plot 
+  geom_point(data=pred.data4, shape=15,
+             mapping=aes(x=longitude, y=latitude, col=vvhA), # variables to plot
+             size=1) + # size of points
+  scale_color_stepsn(n.breaks = 10, colors = hcl.colors(10, palette = "RdYlBu", rev=T), limits=c(0,1.6)) +
+  ggtitle("2019-02-18 00:00 HST")+
+  xlim(-157.867,-157.808) + # x-axis limits
+  ylim(21.258,21.3) + # y-axis limits
+  coord_quickmap()+ # quick map projection
+  theme_classic() # change the default ggplot2 theme
+
+dev.off()
+
+system("open ROMS_Plume.pdf")
+
+
+#ggsave("ROMS_Plume.pdf", arrangeGrob(p1, p2, p3, p4, ncol =2))
+
+
+```
+
