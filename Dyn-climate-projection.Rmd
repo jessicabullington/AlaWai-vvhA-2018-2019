@@ -1,0 +1,60 @@
+---
+title: "Dyn-climate-projection"
+author: "Jessica Bullington"
+date: "12/28/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load data}
+presT = read.csv("dyn_Temp_pres_1990_2009_monthly_ExtractPtsAlaWai.csv" )
+rcp45T = read.csv("dyn_Temp_rcp45_2080_2099_monthly_ExtractPtsAlaWai.csv")
+rcp85T = read.csv("dyn_Temp_rcp85_2080_2099_monthly_ExtractPtsAlaWai.csv")
+presRF = read.csv("dyn_RF_pres_1990_2009_monthly_ExtractPtsAlaWai.csv" )
+rcp45RF = read.csv("dyn_RF_rcp45_2080_2099_monthly_ExtractPtsAlaWai.csv")
+rcp85RF = read.csv("dyn_RF_rcp85_2080_2099_monthly_ExtractPtsAlaWai.csv")
+```
+
+```{r load libraries}
+library(car)
+```
+
+
+```{r predict vvhA for "present day"}
+pres = presT[,1:5]
+pres$Temperature = presT$NOAA.USW00022521..HNL.
+pres$Rainfall = presRF$NOAA.USC00516122..Manoa.
+pres$log10vvhA = 0.4414*log(pres$Rainfall+1) + 0.1405*(pres$Temperature) - 3.7750
+pres$vvhA = 10^pres$log10vvhA
+```
+
+```{r predict vvhA for RCP 4.5}
+rcp45 = rcp45T[,1:5]
+rcp45$Temperature = rcp45T$NOAA.USW00022521..HNL.
+rcp45$Rainfall = rcp45RF$NOAA.USC00516122..Manoa.
+rcp45$log10vvhA = 0.4414*log(rcp45$Rainfall+1) + 0.1405*(rcp45$Temperature) - 3.7750
+rcp45$vvhA = 10^rcp45$log10vvhA
+```
+
+```{r predict vvhA for RCP 8.5}
+rcp85 = rcp85T[,1:5]
+rcp85$Temperature = rcp85T$NOAA.USW00022521..HNL.
+rcp85$Rainfall = rcp85RF$NOAA.USC00516122..Manoa.
+rcp85$log10vvhA = 0.4414*log(rcp85$Rainfall+1) + 0.1405*(rcp85$Temperature) - 3.7750
+rcp85$vvhA = 10^rcp85$log10vvhA
+
+```
+
+```{r plot changes}
+c = rbind(pres, rcp45, rcp85)
+with(c, plot(log10vvhA ~ Time))
+mod = lm(log10vvhA ~ Time, data=c)
+Anova(mod)
+TukeyHSD(aov(mod))
+```
+
