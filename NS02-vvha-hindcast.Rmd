@@ -11,6 +11,9 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r clear workspace}
+rm(list=ls())
+```
 
 ```{r load data}
 bot.data = read.csv("AlaWai_DiscreteBottle.csv")
@@ -23,13 +26,14 @@ disc.data$Site = as.factor(disc.data$Site)
 
 # transformations
 bot.data$log.rain = log10(bot.data$Rainfall_5Day+0.1)
-bot.data$cube.sal = (bot.data$Salinity)^3
+bot.data$sq.sal = (bot.data$Salinity)^2
 bot.data$log.VH = log10(bot.data$VisibleHumic.like)
 
 ```
 
 
 ```{r load libraries}
+#install.packages("packageName") if not already installed
 library(ggplot2)
 library(dplyr) 
 library(tidyr)
@@ -43,10 +47,14 @@ ggplotRegression <- function (fit) {
     ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
       geom_point() +
       theme_bw() +
+      theme(plot.title = element_text(hjust = 1)) +
+      geom_abline(intercept = 0, slope = 1, col = "brown1") +
       stat_smooth(method = "lm", formula= y~x, col = "steelblue") +
-      labs(title = paste("Y =", signif(fit$coef[[1]], 3),
-                         "+", signif(fit$coef[[2]], 3), "*X,",
-                         "R2 = ", signif(summary(fit)$r.squared, 3)))
+      labs(
+        x = "Survey log10(vvhA)", y = "NS02 Predicted log10(vvhA)",
+             title = paste("Y =", round(fit$coef[[1]], 2),
+                         "+", round(fit$coef[[2]], 2), "*X,",
+                         "R^2 = ", round(summary(fit)$r.squared, 2)))
 }
 
 # subset by site
@@ -121,13 +129,15 @@ fdom2 = lm(FLNTU_fDOM_raw ~ log_Survey_VisibleHumic.like, data = disc.data.3)
 ggplotRegression(fdom2) 
 
 fdom3 = lm(log_FLNTU_fDOM_raw ~ log_Survey_VisibleHumic.like, data = disc.data.3) # best
-ggplotRegression(fdom3) 
+ggplotRegression(fdom3) # best
 
 # convert raw fdom to VH
 fdom3.convert = lm(log_Survey_VisibleHumic.like ~ log_FLNTU_fDOM_raw, data = disc.data.3) 
 ggplotRegression(fdom3.convert) 
 
 disc.data.3$log_FLNTU_VH = coef(fdom3.convert)[1] + (coef(fdom3.convert)[2]*log10(disc.data.3$FLNTU_fDOM_raw))
+fdom3.1 = lm(log_FLNTU_VH ~ log_Survey_VisibleHumic.like, data = disc.data.3) # best
+ggplotRegression(fdom3.1) 
 
 # site 2
 disc.data.2 = subset(disc.data, Site == "2" & SampleDepth == "Surface" & Day != "10/21/18")
@@ -146,6 +156,20 @@ ggplotRegression(fdom6)
 
 ```
 
+```{r export regression plots}
+a = ggplotRegression(temp2.1m)
+b = ggplotRegression(sal2.1m) 
+c = ggplotRegression(fdom3.1)
+l = mget(c("a", "c", "b"))
+ggsave("NS02_validation.pdf", marrangeGrob(grobs = l, nrow=2, ncol=2),
+       units = "cm",
+       width = 21,
+       height = 20,
+       dpi = 300)
+
+```
+
+
 ## Predict vvhA
 
 ```{r predict vvhA for discrete NS02 data and compare to survey}
@@ -154,14 +178,14 @@ disc.data.2$log_FLNTU_VH = coef(fdom3.convert)[1] + (coef(fdom3.convert)[2]*log1
 disc.data.2 = na.omit(disc.data.2) # compare model fit to same data
 
 # regression for equation without fDOM
-mod1 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp, data = bot.data) 
+mod1 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + sq.sal + WaterTemp, data = bot.data) 
 
 # predict vvhA for discrete without fDOM
-new.data = data.frame(log10(disc.data.2$Survey_Rainfall_5Day+0.1), disc.data.2$Survey_AirTemp_Max, (disc.data.2$NS02_salinity.PSU)^3, disc.data.2$NS02_temperature.C)
+new.data = data.frame(log10(disc.data.2$Survey_Rainfall_5Day+0.1), disc.data.2$Survey_AirTemp_Max, (disc.data.2$NS02_salinity.PSU)^2, disc.data.2$NS02_temperature.C)
 
 new.data = new.data %>%
   rename(log.rain=log10.disc.data.2.Survey_Rainfall_5Day...0.1., AirTemp_Max=disc.data.2.Survey_AirTemp_Max,
-         cube.sal=X.disc.data.2.NS02_salinity.PSU..3, WaterTemp=disc.data.2.NS02_temperature.C)
+         sq.sal=X.disc.data.2.NS02_salinity.PSU..2, WaterTemp=disc.data.2.NS02_temperature.C)
 
 pred1.CI = predict(mod1, newdata = new.data, interval = "confidence")
 pred1.PI = predict(mod1, newdata = new.data, interval = "prediction")
@@ -174,18 +198,21 @@ vvhA.compare = data.frame(surv.vvhA, pred1.CI, pred1.PI)
 mod.comp = lm(fit ~ surv.vvhA, data=vvhA.compare)
 ggplotRegression(mod.comp) 
 
+rmse.1 = round(sqrt(sum(vvhA.compare$surv.vvhA - vvhA.compare$fit)^2)/nrow(vvhA.compare), 2)
+
+
 # regression for equation with fDOM
-mod2 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp + log.VH, data = bot.data) 
+mod2 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + sq.sal + WaterTemp + log.VH, data = bot.data) 
 
-# predict vvhA for discrete without fDOM
-new.data2 = data.frame(log10(disc.data.2$Survey_Rainfall_5Day+0.1), disc.data.2$Survey_AirTemp_Max, (disc.data.2$NS02_salinity.PSU)^3, disc.data.2$NS02_temperature.C, disc.data.2$log_FLNTU_VH)
+# predict vvhA for discrete with fDOM
+new.data2 = data.frame(log10(disc.data.2$Survey_Rainfall_5Day+0.1), disc.data.2$Survey_AirTemp_Max, (disc.data.2$NS02_salinity.PSU)^2, disc.data.2$NS02_temperature.C, disc.data.2$log_FLNTU_VH)
 
-new.data2 = new.data2 %>% rename(log.rain=log10.disc.data.2.Survey_Rainfall_5Day...0.1., AirTemp_Max=disc.data.2.Survey_AirTemp_Max, cube.sal=X.disc.data.2.NS02_salinity.PSU..3, WaterTemp=disc.data.2.NS02_temperature.C, log.VH=disc.data.2.log_FLNTU_VH)
+new.data2 = new.data2 %>% rename(log.rain=log10.disc.data.2.Survey_Rainfall_5Day...0.1., AirTemp_Max=disc.data.2.Survey_AirTemp_Max, sq.sal=X.disc.data.2.NS02_salinity.PSU..2, WaterTemp=disc.data.2.NS02_temperature.C, log.VH=disc.data.2.log_FLNTU_VH)
 
 pred2.CI = predict(mod2, newdata = new.data2, interval = "confidence")
 pred2.PI = predict(mod2, newdata = new.data2, interval = "prediction")
 
-# compare predicted to observed vvhA without fDOM
+# compare predicted to observed vvhA with fDOM
 surv.vvhA = log10(disc.data.2$Survey_vvhA)
 
 vvhA.compare2 = data.frame(surv.vvhA, pred2.CI, pred2.PI)
@@ -193,15 +220,30 @@ vvhA.compare2 = data.frame(surv.vvhA, pred2.CI, pred2.PI)
 mod.comp2 = lm(fit ~ surv.vvhA, data=vvhA.compare2)
 ggplotRegression(mod.comp2) 
 
+rmse.2 = round(sqrt(sum(vvhA.compare2$surv.vvhA - vvhA.compare2$fit)^2)/nrow(vvhA.compare2), 2)
+
+```
+
+```{r export vvhA prediction plots}
+e = ggplotRegression(mod.comp)
+d = ggplotRegression(mod.comp2) 
+
+l = mget(c("e", "d"))
+ggsave("vvhA_validation.pdf", marrangeGrob(grobs = l, nrow=1, ncol=2),
+       units = "cm",
+       width = 21,
+       height = 10,
+       dpi = 300)
+
 ```
 
 
 ```{r predict vvhA for full year of continuous data}
 cont.data$log_FLNTU_VH = coef(fdom3.convert)[1] + (coef(fdom3.convert)[2]*log10(cont.data$FLNTU_fDOM_raw))
 
-new.data.year = data.frame(log10(cont.data$NOAA_Rainfall_5Day+0.1), cont.data$NOAA_AirTemperature_Max, (cont.data$NS02_salinity)^3, cont.data$NS02_temperature, cont.data$log_FLNTU_VH)
+new.data.year = data.frame(log10(cont.data$NOAA_Rainfall_5Day+0.1), cont.data$NOAA_AirTemperature_Max, (cont.data$NS02_salinity)^2, cont.data$NS02_temperature, cont.data$log_FLNTU_VH)
 
-new.data.year = new.data.year %>% rename(log.rain=log10.cont.data.NOAA_Rainfall_5Day...0.1., AirTemp_Max=cont.data.NOAA_AirTemperature_Max, cube.sal=X.cont.data.NS02_salinity..3, WaterTemp=cont.data.NS02_temperature, log.VH=cont.data.log_FLNTU_VH)
+new.data.year = new.data.year %>% rename(log.rain=log10.cont.data.NOAA_Rainfall_5Day...0.1., AirTemp_Max=cont.data.NOAA_AirTemperature_Max, sq.sal=X.cont.data.NS02_salinity..2, WaterTemp=cont.data.NS02_temperature, log.VH=cont.data.log_FLNTU_VH)
 
 # without fDOM
 pred.year.CI1 = predict(mod1, newdata = new.data.year, interval = "confidence")
@@ -217,64 +259,87 @@ cont.vvhA = data.frame(cont.data, pred.year.CI1, pred.year.CI2)
 
 
 ```{r plot the predictors and vvhA over the sampling year}
-
-pdf("NS02_TimeSeries.pdf", height = 2, width = 14)
-
-par(mfrow = c(7,1))
+sample = c(1540159200,1543528800,1548021600, 1550527200, 1553292000, 1555797600, 1559685600,1567288800,1569794400)
+refs = c("Oct-2018", "Nov", "Jan", "Feb", "Mar", "Apr", "Jun", "Aug", "Sep-2019")
+cuts <- data.frame(sample,refs,stringsAsFactors = FALSE)
 
 # air temp
-ggplot(cont.vvhA, aes(TimeStamp, NOAA_AirTemperature_Max)) +
+f = ggplot(cont.vvhA, aes(TimeStamp, NOAA_AirTemperature_Max)) +
   geom_line(aes(y = NOAA_AirTemperature_Max), color = "pink", size =0.5) +
   scale_y_continuous(limits = c(23,36))+
-  labs(x="", y="Daily Max Air Temperature (C)") +
-  theme_classic()
+  labs(y="Air Temperature") +
+  scale_x_continuous(limits = c(1538431200, 1569967200))+
+  geom_vline(xintercept = sample, linetype = "dashed")+
+  theme_classic()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank()) 
 
 # water temp
-ggplot(cont.vvhA, aes(TimeStamp, NS02_temperature)) +
+g = ggplot(cont.vvhA, aes(TimeStamp, NS02_temperature)) +
   geom_line(aes(y = NS02_temperature), color = "red", size =0.25) +
   scale_y_continuous(limits = c(23,36))+
-  labs(x="", y="Water Temperature (C)")+
-  theme_classic()
+  labs(y="Water Temperature")+
+  scale_x_continuous(limits = c(1538431200, 1569967200))+
+  geom_vline(xintercept = sample, linetype = "dashed")+
+  theme_classic()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank()) 
 
 # rainfall
-ggplot(cont.vvhA, aes(TimeStamp, NOAA_Rainfall)) +
+h = ggplot(cont.vvhA, aes(TimeStamp, NOAA_Rainfall)) +
   geom_line(aes(y = NOAA_Rainfall_5Day), color = "lightblue", size =0.5) +
   scale_y_continuous(limits = c(0,40))+
-  labs(x="", y="Daily Average Rainfall (mm)")+
-  theme_classic()
+  labs(y="Daily Rainfall")+
+  scale_x_continuous(limits = c(1538431200, 1569967200))+
+  geom_vline(xintercept = sample, linetype = "dashed")+
+  theme_classic() +
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank()) 
 
 # salinity
-ggplot(cont.vvhA, aes(TimeStamp, NS02_salinity)) +
+i = ggplot(cont.vvhA, aes(TimeStamp, NS02_salinity)) +
   geom_line(aes(y = NS02_salinity), color = "blue", size =0.25) +
   scale_y_continuous(limits = c(15,35))+
-  labs(x="", y="Salinity")+
-  theme_classic()
+  labs(y="Salinity")+
+  scale_x_continuous(limits = c(1538431200, 1569967200))+
+  geom_vline(xintercept = sample, linetype = "dashed")+
+  theme_classic()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank()) 
 
 # vvhA model 3
-ggplot(cont.vvhA, aes(TimeStamp, fit)) +
+j = ggplot(cont.vvhA, aes(TimeStamp, fit)) +
   geom_line(aes(y = fit), color = "purple", size =0.25) +
   scale_y_continuous(limits = c(-1,3))+
   geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.5) +
-  labs(x="", y="log( V. vulnificus cells/mL)")+
-  theme_classic()
+  labs(y="Model 3 log10(vvhA)")+
+  scale_x_continuous(limits = c(1538431200, 1569967200))+
+  geom_vline(xintercept = sample, linetype = "dashed")+
+  theme_classic()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank()) 
 
 # fdom
-ggplot(cont.vvhA, aes(TimeStamp, log_FLNTU_VH)) +
+k = ggplot(cont.vvhA, aes(TimeStamp, log_FLNTU_VH)) +
   geom_line(aes(y = log_FLNTU_VH), color = "darkgreen", size =0.25) +
   scale_y_continuous(limits = c(-2,1))+
-  labs(x="", y="log( Visible Humic-like DOM )")+
-  theme_classic()
+  labs(y="log10(DOM)")+
+  scale_x_continuous(limits = c(1538431200, 1569967200))+
+  geom_vline(xintercept = sample, linetype = "dashed")+
+  theme_classic()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank()) 
 
 # vvhA model 5
-ggplot(cont.vvhA, aes(TimeStamp, fit.1)) +
+n = ggplot(cont.vvhA, aes(TimeStamp, fit.1)) +
   geom_line(aes(y = fit.1), color = "purple", size =0.25) +
   scale_y_continuous(limits = c(-1,3))+
   geom_ribbon(aes(ymin = lwr.1, ymax = upr.1), alpha = 0.5) +
-  labs(x="Date", y="log( V. vulnificus cells/mL)")+
-  theme_classic()
+  labs(x = " ", y="Model 5 log10(vvhA)")+
+  scale_x_continuous(limits = c(1538431200, 1569967200))+
+  geom_vline(xintercept = sample, linetype = "dashed")+
+  theme_classic()+
+  theme( axis.text.x = element_blank(), axis.ticks.x = element_blank())
 
-dev.off()
-system("open NS02_TimeSeries.pdf")
-
+l = mget(c("f", "g", "h", "i", "j", "k", "n"))
+ggsave("NS02_full_timeseries.pdf", marrangeGrob(grobs = l, nrow=7, ncol=1),
+       units = "cm",
+       width = 21,
+       height = 30,
+       dpi = 300)
 ```
 

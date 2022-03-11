@@ -1,6 +1,6 @@
 ---
 title: "ROMS-vvhA-rainevent"
-author: "Jessica Bullington"
+author: "Anna Neuheimer & Jessica Bullington"
 date: "12/27/2021"
 output: html_document
 editor_options: 
@@ -11,7 +11,134 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r load data}
+```{r clear workspace}
+rm(list=ls())
+```
+
+## Part 1: Extract forcing data from turbidity plume forecast
+
+```{r load libraries}
+library(ncdf4) # to load and manipulate netcdf files
+library(marmap) # to load bathymetry data
+library(ggplot2) # for plotting
+library(scales) # for rescale() function used when making custom palette
+library(raster) # to plot forcing as raster
+library(reshape2) # to reshape data frames, e.g. melt() function
+```
+
+```{r download data from server}
+## This section downloads data from website https://pae-paha.pacioos.hawaii.edu/thredds/dodsC/roms_hiomsag/ROMS_Waikiki_Regional_Ocean_Model_best.ncd.html
+
+url<-"https://pae-paha.pacioos.hawaii.edu/thredds/dodsC/roms_hiomsag/ROMS_Waikiki_Regional_Ocean_Model_best.ncd" # copied from website after desired variables are "clicked on"
+myNCDF<-nc_open(url) # import data as netcdf file
+
+print(myNCDF) # file summary, units, etc
+
+names(myNCDF$var) # show variables in file (9 variables)
+names(myNCDF$dim) # show dimensions in file (4 dimensions)
+
+```
+
+```{r get coordinate data}
+lonAll <- ncvar_get(myNCDF, "lon") # get forcing longitude dimension
+lonRes <- c(1:ncol(lonAll)) # get resolution of longitude
+nlon <- dim(lonAll) # size (189)
+
+latAll <- ncvar_get(myNCDF, "lat") # get forcing latitude dimension
+latRes <- c(1:nrow(latAll)) # get resolution of latitude
+nlat <- dim(latAll) # size (74)
+
+depthAll <- ncvar_get(myNCDF, "depth") # get forcing depth dimension
+depthRes <- c(1:length(depthAll)) # get resolution of depth
+ndepth <- dim(depthAll) # size (14)
+
+timeAll <- ncvar_get(myNCDF, "time") # get forcing time dimension
+tunits <- ncatt_get(myNCDF,"time","units")
+ntime <- dim(timeAll)
+tunits
+
+```
+
+```{r set origin date}
+myOrg<-as.POSIXct("04 May 2015 00:00", # origin, see file under dimensions>time>units "hours since 2015-05-04 00:00:00.000 UTC"
+                  format="%d %B %Y %H:%M", # format as date
+                  tz="UTC") # set time-zone
+
+```
+
+```{r extract forcing data}
+myDate<-as.POSIXct("18 February 2019 00:00", # date of interest in hours
+                   format="%d %B %Y %H:%M", # formate date
+                   tz="Pacific/Honolulu") # set time-zone.  time-zone database in https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+
+attr(myDate, "tzone")<-"UTC" # convert to same time-zone as origin # UTC is HST + 10 hrs
+
+startHours<-as.vector(difftime(myDate, # date of sample
+                               myOrg,  # origin date of forcing
+                               units="hours")) # find out number of hours between sample date and forcing origin.
+startInd<-which(timeAll == startHours) # find which time index corresponds to needed start time
+endInd<-startInd+48 # set endpoint index for forcing extract 
+
+timeSamp <- c(startInd:endInd) # index for start time to extract
+
+# Extract forcing: temperature 
+tempSub <- ncvar_get(nc = myNCDF, # netcdf object
+                  varid = "temp", # desired variable
+                  start = c(min(lonRes), min(latRes), min(depthRes), min(timeSamp)), # index for start of extraction
+                  count=c(-1,-1,-1,length(timeSamp))) # length of extraction, -1 indicates all entries along that dimension should be read.
+
+# Extract forcing: salinity 
+saltSub <- ncvar_get(nc = myNCDF, # netcdf object
+                     varid = "salt", # desired variable
+                     start = c(min(lonRes), min(latRes), min(depthRes), min(timeSamp)), # index for start of extraction
+                     count=c(-1,-1,-1,length(timeSamp))) # length of extraction, -1 indicates all entries along that dimension should be read.
+
+# Extract forcing: turbidity 
+turbSub <- ncvar_get(nc = myNCDF, # netcdf object
+                     varid = "turbidity", # desired variable
+                     start = c(min(lonRes), min(latRes), min(depthRes), min(timeSamp)), # index for start of extraction
+                     count=c(-1,-1,-1,length(timeSamp))) # length of extraction, -1 indicates all entries along that dimension should be read.
+
+```
+
+
+```{r create data frame}
+# reshape dimensions
+latUnique<-melt(latAll) # reshape values to single column
+lonUnique<-melt(lonAll) # reshape values to single column
+
+# reshape variables # index means FIRST depth, FIRST time
+tempSubNow<-melt(tempSub[,,1,13]) # reshape values to single column
+tempSubNow$value[which(tempSubNow$value== "NaN")]<-NA # replace missing values with R's default NA
+
+saltSubNow<-melt(saltSub[,,1,13]) # reshape values to single column
+saltSubNow$value[which(saltSubNow$value== "NaN")]<-NA # replace missing values with R's default NA
+
+turbSubNow<-melt(turbSub[,,1,13]) # reshape values to single column
+turbSubNow$value[which(turbSubNow$value== "NaN")]<-NA # replace missing values with R's default NA
+
+datNow<-data.frame(latitude=latUnique$value,
+                   longitude=lonUnique$value,
+                   temperature=tempSubNow$value,
+                   salinity=saltSubNow$value,
+                   turbidity=turbSubNow$value) # create data frame with forcing in long format.
+
+datNow$time = "2018-02-18 00:00:00 HST"
+datNow$ts = as.numeric(as.POSIXct("2018-02-18 00:00:00 HST"))
+datNow$depth = depthAll[1]
+  
+# trim data to remove NAs 
+datNowTrim = na.omit(datNow)
+
+# save the file
+#write.csv(datNowTrim, "AlaWai_forcing_18Feb2019_00.00.csv", row.names=F) # already exported to repository
+
+```
+
+
+## Part 2: Predict V. vulnificus and generate plots
+
+```{r load previously extracted data}
 data1 = read.csv("AlaWai_forcing_16Feb2019_16.00.csv")
 data2 = read.csv("AlaWai_forcing_17Feb2019_04.00.csv")
 data3 = read.csv("AlaWai_forcing_17Feb2019_20.00.csv")
@@ -19,12 +146,13 @@ data4 = read.csv("AlaWai_forcing_18Feb2019_00.00.csv")
 
 bot.data = read.csv("AlaWai_DiscreteBottle.csv")
 bot.data$log.rain = log10(bot.data$Rainfall_5Day+0.1)
-bot.data$cube.sal = (bot.data$Salinity)^3
+bot.data$sq.sal = (bot.data$Salinity)^2
 
 ```
 
 
 ```{r load libraries}
+#install.packages("packageName") if not already installed
 library(ggplot2)
 library(tidyr)
 library(gridExtra)
@@ -50,10 +178,10 @@ data3$log.rain = log10(data3$rain+0.1)
 data4$log.rain = log10(data4$rain+0.1)
 
 # salinity
-data1$cube.sal = (data1$salinity)^3
-data2$cube.sal = (data2$salinity)^3
-data3$cube.sal = (data3$salinity)^3
-data4$cube.sal = (data4$salinity)^3
+data1$sq.sal = (data1$salinity)^2
+data2$sq.sal = (data2$salinity)^2
+data3$sq.sal = (data3$salinity)^2
+data4$sq.sal = (data4$salinity)^2
 
 # water temp
 data1 = data1 %>% rename(WaterTemp = temperature)
@@ -65,9 +193,9 @@ data4 = data4 %>% rename(WaterTemp = temperature)
 
 
 ```{r predict vvhA}
-model3 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp, data = bot.data) 
+model3 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + sq.sal + WaterTemp, data = bot.data) 
 
-cols = c("log.rain", "AirTemp_Max", "cube.sal", "WaterTemp")
+cols = c("log.rain", "AirTemp_Max", "sq.sal", "WaterTemp")
 nd1 = data1[, (colnames(data1) %in% cols)]
 
 pred1.vvhA.CI1 = predict(model3, newdata = nd1, interval = "confidence")
@@ -98,9 +226,7 @@ pred.data4 = pred.data4 %>% rename(vvhA = fit)
 
 
 ```{r plot vvhA}
-pdf("ROMS_Plume.pdf", height = 4, width = 5)
-
-ggplot() + # initialize plot 
+o = ggplot() + # initialize plot 
   geom_point(data=pred.data1, shape=15,
              mapping=aes(x=longitude, y=latitude, col=vvhA), # variables to plot
              size=1) + # size of points
@@ -111,7 +237,7 @@ ggplot() + # initialize plot
   coord_quickmap()+ # quick map projection
   theme_classic() # change the default ggplot2 theme
 
-ggplot() + # initialize plot 
+p = ggplot() + # initialize plot 
   geom_point(data=pred.data2, shape=15,
              mapping=aes(x=longitude, y=latitude, col=vvhA), # variables to plot
              size=1) + # size of points
@@ -122,7 +248,7 @@ ggplot() + # initialize plot
   coord_quickmap()+ # quick map projection
   theme_classic() # change the default ggplot2 theme
 
-ggplot() + # initialize plot 
+q = ggplot() + # initialize plot 
   geom_point(data=pred.data3, shape=15,
              mapping=aes(x=longitude, y=latitude, col=vvhA), # variables to plot
              size=1) + # size of points
@@ -133,7 +259,7 @@ ggplot() + # initialize plot
   coord_quickmap()+ # quick map projection
   theme_classic() # change the default ggplot2 theme
 
-ggplot() + # initialize plot 
+r = ggplot() + # initialize plot 
   geom_point(data=pred.data4, shape=15,
              mapping=aes(x=longitude, y=latitude, col=vvhA), # variables to plot
              size=1) + # size of points
@@ -144,13 +270,12 @@ ggplot() + # initialize plot
   coord_quickmap()+ # quick map projection
   theme_classic() # change the default ggplot2 theme
 
-dev.off()
-
-system("open ROMS_Plume.pdf")
-
-
-#ggsave("ROMS_Plume.pdf", arrangeGrob(p1, p2, p3, p4, ncol =2))
-
+l = mget(c("o", "p", "q", "r"))
+ggsave("ROMS_plume.pdf", marrangeGrob(grobs = l, nrow=2, ncol=2),
+       units = "cm",
+       width = 21,
+       height = 20,
+       dpi = 300)
 
 ```
 

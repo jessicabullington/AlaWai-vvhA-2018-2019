@@ -1,0 +1,215 @@
+---
+title: "AlaWai-Seasonality"
+author: "Jessica Bullington"
+date: "1/12/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r clear workspace}
+rm(list=ls())
+```
+
+```{r load data}
+full.data = read.csv("AlaWai_DiscreteBottle.csv") 
+```
+
+```{r load libraries}
+#install.packages("packageName") if not already installed
+library(ggplot2) # general plots
+library(effects) # model effects plots
+library(dplyr) # select
+library(car) # Anova
+library(tidyr) # gather
+```
+
+```{r data transformations}
+# transformations
+full.data$log.rain = log10(full.data$Rainfall_5Day)
+full.data$sq.sal = (full.data$Salinity)^2
+full.data$log.turb = log10(full.data$Turbidity)
+full.data$log.chl = log10(full.data$Chlorophyll)
+```
+
+## Part 1 Seasonal climate variation
+```{r climate ~ season}
+# trim data since climate is a daily value
+climate1 = data.frame(full.data$Date, full.data$Month, full.data$Season, full.data$Rainfall_5Day, full.data$log.rain, full.data$AirTemp_Max, full.data$Discharge_3Day)
+climate2 = unique(climate1)
+climate = climate2 %>%
+  rename(Date=full.data.Date, Month=full.data.Month, Season=full.data.Season, Rainfall_5Day=full.data.Rainfall_5Day, log.rain=full.data.log.rain, AirTemp_Max=full.data.AirTemp_Max, Discharge_3Day=full.data.Discharge_3Day)
+```
+
+```{r rainfall ~ season}
+# 5 day average rainfall
+ggplot(climate, aes(x=Season, y=Rainfall_5Day)) + # raw
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+ggplot(climate, aes(x=Season, y=log.rain)) + # log-transformed
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+rain.season = lm(log.rain ~ Season, data=climate)
+residualPlots(rain.season)
+plot(allEffects(rain.season))
+r = as.data.frame(Effect("Season", rain.season))
+inv.log = function(x){10^x}
+r %>% mutate_if(is.numeric, inv.log)
+Anova(rain.season)
+```
+
+```{r air temperature ~ season}
+# Max daily air temperature
+ggplot(climate, aes(x=Season, y=AirTemp_Max)) + 
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+temp.season = lm(AirTemp_Max ~ Season, data=climate)
+residualPlots(temp.season)
+plot(allEffects(temp.season))
+t = as.data.frame(Effect("Season", temp.season))
+t
+Anova(temp.season)
+```
+
+```{r stream discharge ~ season}
+# 3 day average stream discharge
+ggplot(climate, aes(x=Season, y=Discharge_3Day)) + # raw
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+stream.season = lm(Discharge_3Day ~ Season, data=climate)
+residualPlots(stream.season)
+plot(allEffects(stream.season))
+s = as.data.frame(Effect("Season", stream.season))
+s
+Anova(stream.season)
+```
+
+## Part 2 Seasonal water chemistry variation
+
+```{r water temperature ~ season}
+# water temperature
+ggplot(full.data, aes(x=Season, y=WaterTemp)) + 
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+wt.season = lm(WaterTemp ~ Season, data=full.data)
+residualPlots(wt.season)
+plot(allEffects(wt.season))
+wt = as.data.frame(Effect("Season", wt.season))
+wt
+Anova(wt.season)
+
+wt.dry = subset(full.data, Season == "Dry")
+wt.rain = subset(full.data, Season == "Rainy")
+length(na.omit(wt.dry$WaterTemp))
+length(na.omit(wt.rain$WaterTemp))
+```
+
+```{r salinity ~ season}
+# salinity
+ggplot(full.data, aes(x=Season, y=Salinity)) + # raw
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+ggplot(full.data, aes(x=Season, y=sq.sal)) + # square-transformed
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+sal.season = lm(sq.sal ~ Season, data=full.data)
+residualPlots(sal.season)
+plot(allEffects(sal.season))
+sal = as.data.frame(Effect("Season", sal.season))
+sal %>% mutate_if(is.numeric, sqrt)
+Anova(sal.season)
+
+sal.dry = subset(full.data, Season == "Dry")
+sal.rain = subset(full.data, Season == "Rainy")
+length(na.omit(sal.dry$Salinity))
+length(na.omit(sal.rain$Salinity))
+```
+
+```{r chlorophyll ~ season}
+# chlorophyll
+ggplot(full.data, aes(x=Season, y=Chlorophyll)) + # raw
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+ggplot(full.data, aes(x=Season, y=log.chl)) + # log-transformed
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+chl.season = lm(log.chl ~ Season, data=full.data)
+residualPlots(chl.season)
+plot(allEffects(chl.season))
+chl = as.data.frame(Effect("Season", chl.season))
+chl %>% mutate_if(is.numeric, inv.log)
+Anova(chl.season)
+
+chl.dry = subset(full.data, Season == "Dry")
+chl.rain = subset(full.data, Season == "Rainy")
+length(na.omit(chl.dry$Chlorophyll))
+length(na.omit(chl.rain$Chlorophyll))
+```
+
+```{r turbidity ~ season}
+# turbidity
+ggplot(full.data, aes(x=Season, y=Turbidity)) + # raw
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+ggplot(full.data, aes(x=Season, y=log.turb)) + # log-transformed
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+turb.season = lm(log.turb ~ Season, data=full.data)
+residualPlots(turb.season)
+plot(allEffects(turb.season))
+turb = as.data.frame(Effect("Season", turb.season))
+turb %>% mutate_if(is.numeric, inv.log)
+Anova(turb.season)
+
+turb.dry = subset(full.data, Season == "Dry")
+turb.rain = subset(full.data, Season == "Rainy")
+length(na.omit(chl.dry$Turbidity))
+length(na.omit(chl.rain$Turbidity))
+```
+
+```{r dissolved oxygen ~ season}
+# dissolved oxygen
+ggplot(full.data, aes(x=Season, y=O2Conc)) + # raw
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+oxy.season = lm(O2Conc ~ Season, data=full.data)
+residualPlots(oxy.season)
+plot(allEffects(oxy.season))
+oxy = as.data.frame(Effect("Season", oxy.season))
+oxy
+Anova(oxy.season)
+
+oxy.dry = subset(full.data, Season == "Dry")
+oxy.rain = subset(full.data, Season == "Rainy")
+length(na.omit(chl.dry$O2Conc))
+length(na.omit(chl.rain$O2Conc))
+```
+

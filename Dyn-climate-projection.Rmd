@@ -11,50 +11,279 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r clear workspace}
+rm(list=ls())
+```
+
 ```{r load data}
-presT = read.csv("dyn_Temp_pres_1990_2009_monthly_ExtractPtsAlaWai.csv" )
+bot.data = read.csv("AlaWai_DiscreteBottle.csv")
+daily.data = read.csv("Daily_Climatology_2018_2019.csv")
+
+presT = read.csv("dyn_Temp_pres_1990_2009_monthly_ExtractPtsAlaWai.csv") # monthly average temperature
 rcp45T = read.csv("dyn_Temp_rcp45_2080_2099_monthly_ExtractPtsAlaWai.csv")
 rcp85T = read.csv("dyn_Temp_rcp85_2080_2099_monthly_ExtractPtsAlaWai.csv")
-presRF = read.csv("dyn_RF_pres_1990_2009_monthly_ExtractPtsAlaWai.csv" )
+presRF = read.csv("dyn_RF_pres_1990_2009_monthly_ExtractPtsAlaWai.csv") # monthly average rainfall
 rcp45RF = read.csv("dyn_RF_rcp45_2080_2099_monthly_ExtractPtsAlaWai.csv")
 rcp85RF = read.csv("dyn_RF_rcp85_2080_2099_monthly_ExtractPtsAlaWai.csv")
 ```
 
 ```{r load libraries}
+#install.packages("packageName") if not already installed
 library(car)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(effects)
+library(gridExtra)
 ```
 
+```{r generate vvhA predictive model}
+# Average rainfall and air temperature for 30 days prior to sampling for vvhA
+Temp_30Day = vector()
+Rain_30Day = vector()
+
+for (i in 30:nrow(daily.data)){
+  Rain_30Day[i] = mean(daily.data$NOAA_Rainfall_mm[i-1:30])
+  Temp_30Day[i] = mean(daily.data$NOAA_AirTemperature_Ave[i-1:30])
+}
+
+summary = data.frame(daily.data$Date, Temp_30Day, Rain_30Day)
+summary = summary %>% rename(Date=daily.data.Date)
+
+# filter for only sampling days
+sample.days = c("2018-10-21", "2018-11-29", "2019-01-20", "2019-02-18", "2019-03-22",
+                "2019-04-20", "2019-06-04", "2019-08-31", "2019-09-29") # check date format in csv
+
+canal = subset(summary, Date %in% sample.days)
+
+# combine with bottle data
+bot.data$Date = factor(bot.data$Date, levels= c("2018-10-21", "2018-11-29", "2019-01-20", "2019-02-18", "2019-03-22", "2019-04-20", "2019-06-04", "2019-08-31", "2019-09-29"))
+
+combo = full_join(bot.data, canal, by = "Date")
+
+# site 1 and 2 removed (outside canal)
+canal_sites = c("3", "4", "5", "6", "7", "8")
+combo = subset(combo, Site %in% canal_sites)
+
+# generate model
+combo$log.vvhA = log10(combo$vvhA)
+mod = lm(log.vvhA ~ Temp_30Day + log10(Rain_30Day), data = combo)
+summary(mod)
+
+mod2 = lm(log.vvhA ~ AirTemp_Max + log10(Rainfall_5Day), data = combo)
+summary(mod2)
+
+```
 
 ```{r predict vvhA for "present day"}
+# 30 day
 pres = presT[,1:5]
-pres$Temperature = presT$NOAA.USW00022521..HNL.
-pres$Rainfall = presRF$NOAA.USC00516122..Manoa.
-pres$log10vvhA = 0.4414*log(pres$Rainfall+1) + 0.1405*(pres$Temperature) - 3.7750
-pres$vvhA = 10^pres$log10vvhA
+pres$Temp_30Day = presT$NOAA.USW00022521..HNL.
+pres$Rain_30Day = presRF$NOAA.USC00516122..Manoa.
+pred.CI = predict(mod, newdata = pres, interval = "confidence")
+
+pres.vvhA = data.frame(pres, pred.CI)
+pres.vvhA = pres.vvhA %>% rename(log.vvhA=fit)
+
+# --- OR ---
+# current
+pres = presT[,1:5]
+pres$AirTemp_Max = presT$NOAA.USW00022521..HNL.
+pres$Rainfall_5Day = presRF$NOAA.USC00516122..Manoa.
+pred.CI = predict(mod2, newdata = pres, interval = "confidence")
+
+pres.vvhA = data.frame(pres, pred.CI)
+pres.vvhA = pres.vvhA %>% rename(log.vvhA=fit)
+
 ```
 
 ```{r predict vvhA for RCP 4.5}
+# 30 day
 rcp45 = rcp45T[,1:5]
-rcp45$Temperature = rcp45T$NOAA.USW00022521..HNL.
-rcp45$Rainfall = rcp45RF$NOAA.USC00516122..Manoa.
-rcp45$log10vvhA = 0.4414*log(rcp45$Rainfall+1) + 0.1405*(rcp45$Temperature) - 3.7750
-rcp45$vvhA = 10^rcp45$log10vvhA
+rcp45$Temp_30Day = rcp45T$NOAA.USW00022521..HNL.
+rcp45$Rain_30Day = rcp45RF$NOAA.USC00516122..Manoa.
+pred.CI = predict(mod, newdata = rcp45, interval = "confidence")
+
+rcp45.vvhA = data.frame(rcp45, pred.CI)
+rcp45.vvhA = rcp45.vvhA %>% rename(log.vvhA=fit)
+
+# --- OR ---
+# current
+rcp45 = rcp45T[,1:5]
+rcp45$AirTemp_Max = rcp45T$NOAA.USW00022521..HNL.
+rcp45$Rainfall_5Day = rcp45RF$NOAA.USC00516122..Manoa.
+pred.CI = predict(mod2, newdata = rcp45, interval = "confidence")
+
+rcp45.vvhA = data.frame(rcp45, pred.CI)
+rcp45.vvhA = rcp45.vvhA %>% rename(log.vvhA=fit)
+
 ```
 
 ```{r predict vvhA for RCP 8.5}
+# 30 day
 rcp85 = rcp85T[,1:5]
-rcp85$Temperature = rcp85T$NOAA.USW00022521..HNL.
-rcp85$Rainfall = rcp85RF$NOAA.USC00516122..Manoa.
-rcp85$log10vvhA = 0.4414*log(rcp85$Rainfall+1) + 0.1405*(rcp85$Temperature) - 3.7750
-rcp85$vvhA = 10^rcp85$log10vvhA
+rcp85$Temp_30Day = rcp85T$NOAA.USW00022521..HNL.
+rcp85$Rain_30Day = rcp85RF$NOAA.USC00516122..Manoa.
+pred.CI = predict(mod, newdata = rcp85, interval = "confidence")
+
+rcp85.vvhA = data.frame(rcp85, pred.CI)
+rcp85.vvhA = rcp85.vvhA %>% rename(log.vvhA=fit)
+
+# --- OR ---
+# current
+rcp85 = rcp85T[,1:5]
+rcp85$AirTemp_Max = rcp85T$NOAA.USW00022521..HNL.
+rcp85$Rainfall_5Day = rcp85RF$NOAA.USC00516122..Manoa.
+pred.CI = predict(mod2, newdata = rcp85, interval = "confidence")
+
+rcp85.vvhA = data.frame(rcp85, pred.CI)
+rcp85.vvhA = rcp85.vvhA %>% rename(log.vvhA=fit)
 
 ```
+
+```{r statistics}
+# make data frame
+c = rbind(pres.vvhA, rcp45.vvhA, rcp85.vvhA)
+
+# calculate mean values
+means = c %>% group_by(Time) %>% summarise_if(is.numeric, mean, na.rm = TRUE) 
+means = subset(means, select = -c(Year, Month))
+means = means %>% rename(Temp = Temp_30Day, Rain = Rain_30Day) # no longer 30 day average
+means$log.CI = means$upr - means$log.vvhA
+means$vvhA = 10^means$log.vvhA
+means$CI.pos = 10^means$upr
+means$CI.neg = 10^means$lwr
+
+# test effect of time period
+mod.t = lm(Temp_30Day ~ Time, data = c)
+Anova(mod.t)
+TukeyHSD(aov(mod.t))
+
+mod.r = lm(log10(Rain_30Day) ~ Time, data = c)
+Anova(mod.r)
+TukeyHSD(aov(mod.r))
+
+mod.v = lm(log.vvhA ~ Time, data = c)
+Anova(mod.v)
+TukeyHSD(aov(mod.v))
+plot(allEffects(mod.v))
+
+# test interaction of season (although this delineation might change with climate change)
+c$Month = as.factor(c$Month)
+rainy = c("10", "11", "12", "1", "2", "3")
+dry = c("4", "5", "6", "7", "8", "9")
+
+# make season factor
+c2 = c %>% mutate(Season = case_when(Month %in% rainy ~ "Rainy", Month %in% dry ~ "Dry"))
+
+# calculate mean values
+means2 = c2 %>% group_by(Time, Season) %>% summarise_if(is.numeric, mean, na.rm = TRUE) 
+means2 = subset(means2, select = -c(Year))
+means2 = means2 %>% rename(Temp = Temp_30Day, Rain = Rain_30Day) # no longer 30 day average
+means2$log.CI = means2$upr - means2$log.vvhA
+means2$vvhA = 10^means2$log.vvhA
+means2$CI.pos = 10^means2$upr
+means2$CI.neg = 10^means2$lwr
+
+mod.t2 = lm(Temp_30Day ~ Time*Season, data = c2)
+Anova(mod.t2)
+
+mod.r2 = lm(log10(Rain_30Day) ~ Time*Season, data = c2)
+Anova(mod.r2)
+
+mod.v2 = lm(log.vvhA ~ Time*Season, data = c2)
+Anova(mod.v2)
+plot(allEffects(mod.v2))
+```
+
+
+```{r percent increase and fold change}
+# pres
+percent.pres = (means$vvhA[1] - means$vvhA[1])/means$vvhA[1] * 100
+percent.pres.upr = (means$CI.pos[1] - means$vvhA[1])/means$vvhA[1] * 100
+percent.pres.lwr = (means$CI.neg[1] - means$vvhA[1])/means$vvhA[1] * 100
+
+fold.pres = means$vvhA[1]/means$vvhA[1]
+fold.pres.upr = means$CI.pos[1]/means$vvhA[1]
+fold.pres.lwr = means$CI.neg[1]/means$vvhA[1]
+
+# rcp45
+percent.rcp45 = (means$vvhA[2] - means$vvhA[1])/means$vvhA[1] * 100
+percent.rcp45.upr = (means$CI.pos[2] - means$vvhA[1])/means$vvhA[1] * 100
+percent.rcp45.lwr = (means$CI.neg[2] - means$vvhA[1])/means$vvhA[1] * 100
+
+fold.rcp45 = means$vvhA[2]/means$vvhA[1]
+fold.rcp45.upr = means$CI.pos[2]/means$vvhA[1]
+fold.rcp45.lwr = means$CI.neg[2]/means$vvhA[1]
+
+# rcp85
+percent.rcp85 = (means$vvhA[3] - means$vvhA[1])/means$vvhA[1] * 100
+percent.rcp85.upr = (means$CI.pos[3] - means$vvhA[1])/means$vvhA[1] * 100
+percent.rcp85.lwr = (means$CI.neg[3] - means$vvhA[1])/means$vvhA[1] * 100
+
+fold.rcp85 = means$vvhA[3]/means$vvhA[1]
+fold.rcp85.upr = means$CI.pos[3]/means$vvhA[1]
+fold.rcp85.lwr = means$CI.neg[3]/means$vvhA[1]
+
+# create data frame
+percent = c(percent.pres, percent.rcp45, percent.rcp85)
+percent.lwr = c(percent.pres.lwr, percent.rcp45.lwr, percent.rcp85.lwr)
+percent.upr = c(percent.pres.upr, percent.rcp45.upr, percent.rcp85.upr)
+
+fold = c(fold.pres, fold.rcp45, fold.rcp85)
+fold.lwr = c(fold.pres.lwr, fold.rcp45.lwr, fold.rcp85.lwr)
+fold.upr = c(fold.pres.upr, fold.rcp45.upr, fold.rcp85.upr)
+
+change = data.frame(means, percent, percent.lwr, percent.upr, fold, fold.lwr, fold.upr)
+change$log.fold = log10(change$fold)
+change$log.fold.lwr = log10(change$fold.lwr)
+change$log.fold.upr = log10(change$fold.upr)
+
+```
+
 
 ```{r plot changes}
-c = rbind(pres, rcp45, rcp85)
-with(c, plot(log10vvhA ~ Time))
-mod = lm(log10vvhA ~ Time, data=c)
-Anova(mod)
-TukeyHSD(aov(mod))
-```
+# boxplot with all data
+with(c, plot(log.vvhA ~ Time))
 
+# create numeric representation of time period
+means = means %>% mutate(Num_Time = case_when(Time == "pres" ~ 0, Time == "rcp45" ~ 1, Time == "rcp85" ~ 2))
+means2 = means2 %>% mutate(Num_Time = case_when(Time == "pres" ~ 0, Time == "rcp45" ~ 1, Time == "rcp85" ~ 2))
+
+levels(means$Time) = c("1990-2009", "RCP 4.5", "RCP 8.5")
+levels(means2$Time) = c("1990-2009", "RCP 4.5", "RCP 8.5")
+
+# plot overall change with 95% CI
+bm = ggplot(means, aes(x=Time, y=log.vvhA, fill=-log.vvhA)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  scale_y_continuous(limits = c(0,3)) +
+  geom_errorbar(aes(ymin=log.vvhA-log.CI, ymax=log.vvhA+log.CI), width=.2) +
+  labs(x="", y="Predicted log10(vvhA)")+
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none") 
+
+# separate by season
+sm = ggplot(means2, aes(x=Time, y=log.vvhA, group=Season, fill=Season)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  geom_errorbar(aes(ymin=log.vvhA-log.CI, ymax=log.vvhA+log.CI), width=.2, position=position_dodge(0.9)) +
+  labs(x="", y="Predicted log10(vvhA)")+
+  scale_y_continuous(limits = c(0,3)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) 
+
+l = mget(c("bm", "sm"))
+ggsave("Projection.pdf", marrangeGrob(grobs = l, nrow=1, ncol=2),
+       units = "cm",
+       width = 21,
+       height = 10,
+       dpi = 300,
+       limitsize = FALSE)
+
+# plot change
+ggplot(change, aes(x=Time, y=fold, fill=-fold)) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  geom_errorbar(aes(ymin=fold.lwr, ymax=fold.upr), width=.2) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) 
+
+```

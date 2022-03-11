@@ -12,36 +12,36 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
-```{r load data}
-full.data = read.csv("AlaWai_DiscreteBottle.csv") # load data
-sapply(full.data, class) # check class type
-full.data$Site = as.factor(full.data$Site)
-sdata = subset(full.data, !is.na(full.data$vvhA)) # 3 missing values removed
+```{r clear workspace}
+rm(list=ls())
 ```
 
+```{r load data}
+full.data = read.csv("AlaWai_DiscreteBottle.csv") 
+sapply(full.data, class) # check class type
+full.data$Site = as.factor(full.data$Site)
+```
 
 ```{r load libraries}
-library(car)
-library(ggplot2)
-library(effects)
-library(MuMIn)
-library(Hmisc)
-
+#install.packages("packageName") if not already installed
+library(ggplot2) # general plots
+library(effects) # model effects plots
+library(Hmisc) # correlation matrix
 library(MuMIn) # AIC and model.sel
 library(dplyr) # select
 library(car) # Anova
 library(boot) # only for cv.glm
 library(DAAG) # for cv.lm 
-library(tidyr) # for gather
+library(tidyr) # gather
 library(GGally) # ggpairs
-
+library(gridExtra) #marrangeGrob
 ```
 
-
-## Distribution of V. vulfnificus (vvhA) concentration
+## Part 1 Distribution of V. vulfnificus (vvhA) concentration
 
 ```{r check distribution of vvhA response variable}
+sdata = subset(full.data, !is.na(full.data$vvhA)) # 42 missing values removed
+
 # Raw (non-negative, continuous, right-skewed)
 hist(sdata$vvhA, xlab="vvhA", main = "Histogram") 
 shapiro.test(sdata$vvhA)
@@ -67,14 +67,13 @@ qqnorm(resid(gamma.model))
 qqline(resid(gamma.model), col = "steelblue", lwd = 2)
 ```
 
-## Temporal and spatial variability of V. vulfnificus (vvhA)
+## Part 2 Temporal and spatial variability of V. vulfnificus (vvhA)
 
 ```{r vvhA ~ month site and sample depth with interactions}
 # set month levels
 sdata$Month = factor(sdata$Month, levels= c("October", "November", "January", "February", "March", "April", "June", "August", "September"))
 
 levels(sdata$Month) = c("Oct", "Nov", "Jan", "Feb", "Mar", "Apr", "Jun", "Aug", "Sep")
-
 
 # lognormal
 mod1 = lm(log10(vvhA) ~ Month + Site + SampleDepth + Month:Site + Month:SampleDepth + Site:SampleDepth, data = sdata)
@@ -134,6 +133,19 @@ summary(season.lm)
 Anova(season.lm)
 residualPlots(season.lm)
 plot(allEffects(season.lm))
+inv.log = function(x){10^x}
+seas = as.data.frame(Effect("Season", season.lm))
+seas %>% mutate_if(is.numeric, inv.log)
+
+ggplot(full.data, aes(x=Season, y=log10(vvhA))) + 
+  geom_boxplot() +
+  theme_bw() +
+  geom_jitter(shape=16, position=position_jitter(0.2))
+
+vvhA.dry = subset(sdata, Season == "Dry")
+vvhA.rain = subset(sdata, Season == "Rainy")
+range(vvhA.dry$vvhA)
+range(vvhA.rain$vvhA)
 
 # run gamma model
 season.glm = glm(vvhA ~ Season, family = Gamma(link = "log"), data=sdata)
@@ -217,7 +229,67 @@ plot(allEffects(sampledepth.glm2))
 ```
 
 
-## Model selection with continuous predictors
+```{r vvhA ~ site and season}
+# run lognormal model
+ss.lm = lm(log10(vvhA) ~ Site*Season, data=sdata)
+summary(ss.lm)
+Anova(ss.lm)
+residualPlots(ss.lm)
+plot(allEffects(ss.lm),  
+     lines=list(multiline=TRUE, col="black", lty=1:9),
+     confint=list(style="bars"),
+     lattice=list(key.args=list(space="right", columns=1)))
+
+# Define standard error
+se = function(x) sd(x)/sqrt(length(x))
+
+ss.raw = sdata %>% group_by(Season, Site) %>% summarise(mean = mean(log10(vvhA)), se = se(log10(vvhA))) 
+ss.raw$Site = as.numeric(as.character(ss.raw$Site))
+
+ss = ggplot(ss.raw, aes(x = Site, y = mean, col = Season, group = Season)) +
+    geom_point(stat = "identity")  +
+    geom_line() +
+    ggtitle("") + 
+    ylab("log10(vvhA)") +
+    xlab("Site") +
+    geom_errorbar(aes(ymin = mean - se*2, ymax = mean + se*2), width = 0.2) +
+    theme_bw() +
+    theme(legend.position = "right")
+
+ggsave("SiteBySeasonLegend.pdf", ss,
+       units = "cm",
+       width = 10,
+       height = 10,
+       dpi = 300)
+
+# including sample depth facet in plot
+ssd.raw = sdata %>% group_by(SampleDepth, Season, Site) %>% summarise(mean = mean(log10(vvhA)), se = se(log10(vvhA))) 
+ssd.raw$Site = as.numeric(as.character(ssd.raw$Site))
+ssd.raw$SampleDepth = factor(ssd.raw$SampleDepth, levels= c("Surface", "Pycnocline", "Bottom"))
+
+ssd = ggplot(ssd.raw, aes(x = Site, y = mean, col = Season, group = Season)) +
+    geom_point(stat = "identity")  +
+    geom_line() +
+    facet_grid(cols = vars(SampleDepth)) +
+    ggtitle("") + 
+    ylab("log10(vvhA)") +
+    xlab("Site") +
+    scale_x_continuous(n.breaks = 8) +
+    geom_errorbar(aes(ymin = mean - se*1.96, ymax = mean + se*1.96), width = 0.2) +
+    theme_bw() +
+    theme(legend.position = "right") +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) 
+
+ggsave("SiteBySeasonDepth.pdf", ssd,
+       units = "cm",
+       width = 30,
+       height = 10,
+       dpi = 300)
+
+```
+
+
+## Part 3 Model selection with continuous predictors
 
 ```{r correlation matrix}
 # trim down variables
@@ -243,7 +315,7 @@ heatmap(x = res2$r, col = col, symm = TRUE)
 cols_keep = c("vvhA", "Rainfall_5Day", "AirTemp", "O2Conc", "Salinity", "WaterTemp", "Turbidity", "Chlorophyll", "NOx", "Silicate", "POC", "TotalP", "Tyrosine.like", "HIX",  "VisibleHumic.like")
 sub.data = trim.data[, (colnames(trim.data) %in% cols_keep)]
 
-pairs(~ log10(vvhA) + NOx + Silicate + Rainfall + O2Conc + Salinity + WaterTemp + POC + TotalP + Tyrosine.like + HIX + Turbidity + Chlorophyll + VisibleHumic.like, data=sub.data)
+pairs(~ log10(vvhA) + NOx + Silicate + Rainfall_5Day + O2Conc + Salinity + WaterTemp + POC + TotalP + Tyrosine.like + HIX + Turbidity + Chlorophyll + VisibleHumic.like, data=sub.data)
 
 ggpairs(sub.data) # warnings about missing values
 
@@ -257,7 +329,7 @@ residualPlots(big.model)
 
 # transformations
 full.data$log.rain = log10(full.data$Rainfall_5Day)
-full.data$cube.sal = (full.data$Salinity)^3
+full.data$sq.sal = (full.data$Salinity)^2
 full.data$log.turb = log10(full.data$Turbidity)
 full.data$log.chl = log10(full.data$Chlorophyll)
 full.data$log.NOx = log10(full.data$NOx)
@@ -266,30 +338,33 @@ full.data$log.POC = log10(full.data$POC)
 full.data$log.VH = log10(full.data$VisibleHumic.like)
 
 # check residuals after transformations
-big.model2 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp + O2Conc + log.turb + log.chl + log.NOx + log.TP + log.POC + HIX + log.VH, data=full.data)
+big.model2 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + sq.sal + WaterTemp + O2Conc + log.turb + log.chl + log.NOx + log.TP + log.POC + HIX + log.VH, data=full.data)
 residualPlots(big.model2)
-plot(allEffects(big.model2))
+vif(big.model2)
 
 # data table without NAs for dredge function
-cols_dredge = c("vvhA", "log.rain", "AirTemp_Max", "cube.sal", "WaterTemp", "O2Conc", "log.turb", "log.chl", "log.NOx", "log.TP", "log.POC",  "HIX", "log.VH")
+cols_dredge = c("vvhA", "log.rain", "AirTemp_Max", "sq.sal", "WaterTemp", "O2Conc", "log.turb", "log.chl", "log.NOx", "log.TP", "log.POC",  "HIX", "log.VH")
 dredge.data = full.data[, (colnames(full.data) %in% cols_dredge)]
-dredge.data2 = na.omit(dredge.data) # 21 rows removed
+dredge.data2 = na.omit(dredge.data) # 59 rows removed
 
 # run model for dredge function
-dredge.model = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp + O2Conc + log.turb + log.chl + log.NOx + log.TP + log.POC + HIX + log.VH, data = dredge.data2, na.action = na.fail)
+dredge.model = lm(log10(vvhA) ~ log.rain + AirTemp_Max + sq.sal + WaterTemp + O2Conc + log.turb + log.chl + log.NOx + log.TP + log.POC + HIX + log.VH, data = dredge.data2, na.action = na.fail)
+
+summary(dredge.model)
+confint(dredge.model)
 
 # all possible predictor combinations with dredge function
 big.dredge = dredge(dredge.model, extra = "R^2")
-head(model.sel(big.dredge), n=20)
-big.avg = model.avg(big.dredge, delta < 4)
+head(model.sel(big.dredge), n=10)
+big.avg = model.avg(big.dredge, delta < 10)
 summary(big.avg)
 importance(big.avg)
 
 # lowest AICc model
-best.model = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp + O2Conc + log.NOx + log.TP + HIX + log.VH, data = full.data)
+best.model = lm(log10(vvhA) ~ log.rain + AirTemp_Max + WaterTemp + log.NOx + HIX + log.VH, data = full.data)
 
 # check for collinearity using variance inflation factors (VIF)
-vif(best.model) # verify below 10, remove if redundant
+vif(best.model) # verify below 10 or 5, remove if redundant
 
 # check residuals and linear effects plots
 residualPlots(best.model, test=F)
@@ -307,24 +382,23 @@ confint(best.model)
 ```
 
 
-## Model Comparison
+## Part 4 Model Comparison
 
 ```{r generate and compare six models for different applications}
 # select data
-cols = c("vvhA", "log.rain", "AirTemp_Max", "cube.sal", "WaterTemp", "O2Conc", "log.NOx", "log.TP", "HIX", "log.VH")
+cols = c("vvhA", "log.rain", "AirTemp_Max", "sq.sal", "WaterTemp", "log.NOx", "HIX", "log.VH")
 model.data = full.data[, (colnames(full.data) %in% cols)]
 
 # remove any rows with missing data so models are all fitted to the same data to make comparisons
-model.data2 = na.omit(model.data) # removes 11 observations
+model.data2 = na.omit(model.data) # removes 49 observations
 
 # define models
 model1 = lm(log10(vvhA) ~ log.rain + AirTemp_Max, data = model.data2) # cliamte-only model
-model2 = lm(log10(vvhA) ~ cube.sal + WaterTemp, data = model.data2) # water chemistry model
-model3 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp, data = model.data2) # ROMS (physical)
-model4 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp + log.NOx + log.TP, data = model.data2) # Nutrients
-model5 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp + log.VH, data = model.data2) # NS02
-model6 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + cube.sal + WaterTemp + O2Conc + log.NOx + log.TP + HIX + log.VH, data = model.data2) # "best" = lowest AICc model
-
+model2 = lm(log10(vvhA) ~ sq.sal + WaterTemp, data = model.data2) # water chemistry model
+model3 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + sq.sal + WaterTemp, data = model.data2) # ROMS (physical)
+model4 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + sq.sal + WaterTemp + log.NOx, data = model.data2) # Nutrients
+model5 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + sq.sal + WaterTemp + log.VH, data = model.data2) # NS02
+model6 = lm(log10(vvhA) ~ log.rain + AirTemp_Max + WaterTemp + log.NOx + HIX + log.VH, data = model.data2) # "best" = lowest AICc model
 
 # LRT
 summary(model1)
@@ -333,6 +407,13 @@ summary(model3)
 summary(model4)
 summary(model5)
 summary(model6)
+
+confint(model1)
+confint(model2)
+confint(model3)
+confint(model4)
+confint(model5)
+confint(model6)
 
 #AIC
 all.models = list(model1, model2, model3, model4, model5, model6)
@@ -354,12 +435,12 @@ rmse6 = round(sqrt(sum((log10(model.data2$vvhA) - predict(model6))^2)/nrow(model
 # LOOCV (folds (m) = # observations) 
 # training set is all obs -1, test set is the one you are predicting
 # output: Predicted col is using all obs, cvpred col is using LOOCV
-cv1 = cv.lm(model.data2, model1, m=202, printit=T, plotit=F) # can't both be false, bug # plotit take forever
-cv2 = cv.lm(model.data2, model2, m=202, printit=T, plotit=F) 
-cv3 = cv.lm(model.data2, model3, m=202, printit=T, plotit=F) 
-cv4 = cv.lm(model.data2, model4, m=202, printit=T, plotit=F) 
-cv5 = cv.lm(model.data2, model5, m=202, printit=T, plotit=F) 
-cv6 = cv.lm(model.data2, model6, m=202, printit=T, plotit=F) 
+cv1 = cv.lm(model.data2, model1, m=164, printit=T, plotit=F) # can't both be false, bug # plotit takes forever
+cv2 = cv.lm(model.data2, model2, m=164, printit=T, plotit=F) 
+cv3 = cv.lm(model.data2, model3, m=164, printit=T, plotit=F) 
+cv4 = cv.lm(model.data2, model4, m=164, printit=T, plotit=F) 
+cv5 = cv.lm(model.data2, model5, m=164, printit=T, plotit=F) 
+cv6 = cv.lm(model.data2, model6, m=164, printit=T, plotit=F) 
 
 # RMSE for comparison (want low value)
 loocv1 = round(sqrt(attr(cv1, "ms")), 2)
@@ -370,28 +451,28 @@ loocv5 = round(sqrt(attr(cv5, "ms")), 2)
 loocv6 = round(sqrt(attr(cv6, "ms")), 2)
 
 #RMSE: typical prediction differs from observed value by (RMSE). 
-10^(sqrt(attr(cv1, "ms"))) # Corrected for transformation
-10^(sqrt(attr(cv2, "ms")))
-10^(sqrt(attr(cv3, "ms")))
-10^(sqrt(attr(cv4, "ms")))
-10^(sqrt(attr(cv5, "ms")))
-10^(sqrt(attr(cv6, "ms")))
+pe1 = 10^(sqrt(attr(cv1, "ms"))) # Corrected for transformation
+pe2 = 10^(sqrt(attr(cv2, "ms")))
+pe3 = 10^(sqrt(attr(cv3, "ms")))
+pe4 = 10^(sqrt(attr(cv4, "ms")))
+pe5 = 10^(sqrt(attr(cv5, "ms")))
+pe6 = 10^(sqrt(attr(cv6, "ms")))
 
 ```
 
 
 ```{r plot observed by predicted vvhA for each model}
 # predictions with all observations
-p = data.frame(cv1[11], cv1[12], cv2[12], cv3[12], cv4[12], cv5[12], cv6[12])
+p = data.frame(cv1[9], cv1[10], cv2[10], cv3[10], cv4[10], cv5[10], cv6[10]) # log vvhA and Prediction column
 names(p) <- c("vvhA", "M1", "M2", "M3", "M4", "M5", "M6")
 
 p2 <- p %>% gather("Model", "Prediction", 2:7)
 p2$Model = as.factor(p2$Model)
 
 
-pdf("Model_RMSE_allObs.pdf", height = 7, width = 10)
+pdf("Model_RMSE_allObs.pdf", height = 10, width = 7)
 
-par(mfrow = c(2,3))
+par(mfrow = c(3,2))
 
 d1 = subset(p2, Model == "M1")
 with(d1, plot(vvhA, Prediction, pch =20,
@@ -452,16 +533,16 @@ system("open Model_RMSE_allObs.pdf")
 
 
 # predictions with LOOCV
-p = data.frame(cv1[11], cv1[13], cv2[13], cv3[13], cv4[13], cv5[13], cv6[13])
+p = data.frame(cv1[9], cv1[11], cv2[11], cv3[11], cv4[11], cv5[11], cv6[11]) # log vvha and cvpred
 names(p) <- c("vvhA", "M1", "M2", "M3", "M4", "M5", "M6")
 
 p2 <- p %>% gather("Model", "Prediction", 2:7)
 p2$Model = as.factor(p2$Model)
 
 
-pdf("Model_RMSE_LOOCV.pdf", height = 7, width = 10)
+pdf("Model_RMSE_LOOCV.pdf", height = 10, width = 7)
 
-par(mfrow = c(2,3))
+par(mfrow = c(3,2))
 
 d1 = subset(p2, Model == "M1")
 with(d1, plot(vvhA, Prediction, pch =20,
@@ -521,5 +602,57 @@ dev.off()
 system("open Model_RMSE_LOOCV.pdf")
 
 
+```
+
+```{r define regression plot}
+# visualize model fit with continuous data
+ggplotRegression <- function (fit) {
+    ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+      geom_point() +
+      theme_bw() +
+      theme(plot.title = element_text(hjust = 1)) +
+      geom_abline(intercept = 0, slope = 1, col = "brown1") +
+      stat_smooth(method = "lm", formula= y~x, col = "steelblue") +
+      labs(x = "log10(vvhA)",
+                        title = paste("Y =", round(fit$coef[[1]], 2),
+                         "+", round(fit$coef[[2]], 2), "*X,",
+                         "R^2 = ", round(summary(fit)$r.squared, 2)))
+}
+
+```
+
+
+```{r regression of predicted ~ observed vvhA}
+d1mod = lm(Prediction~vvhA, data=d1)
+d2mod = lm(Prediction~vvhA, data=d2)
+d3mod = lm(Prediction~vvhA, data=d3)
+d4mod = lm(Prediction~vvhA, data=d4)
+d5mod = lm(Prediction~vvhA, data=d5)
+d6mod = lm(Prediction~vvhA, data=d6)
+
+plt1 = ggplotRegression(d1mod)
+plt2 = ggplotRegression(d2mod)
+plt3 = ggplotRegression(d3mod)
+plt4 = ggplotRegression(d4mod)
+plt5 = ggplotRegression(d5mod)
+plt6 = ggplotRegression(d6mod)
+
+l = mget(c("plt1", "plt3", "plt5", "plt2", "plt4", "plt6"))
+ggsave("model_compare_reg.pdf", marrangeGrob(grobs = l, nrow=3, ncol=2),
+       units = "cm",
+       width = 21,
+       height = 30,
+       dpi = 300)
+
+```
+
+```{r climate model for average vvhA}
+# site 1 and 2 removed (outside canal)
+canal_sites = c("3", "4", "5", "6", "7", "8")
+rdata = subset(sdata, Site %in% canal_sites)
+ave = rdata %>% group_by(Date) %>% summarise_if(is.numeric, mean, na.rm = TRUE) 
+ave$log.rain = log10(ave$Rainfall_5Day)
+mod.ave = lm(log10(vvhA) ~ log.rain + AirTemp_Max, data=ave)
+summary(mod.ave)
 ```
 
